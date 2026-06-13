@@ -379,13 +379,11 @@ let partner=null;                // the other peer's cid (1-to-1 video)
 let matched=false, seeking=false;
 const recentLeft=new Map();      // cid -> ts; peers we just left, to avoid snap-back
 const RELEASE_COOLDOWN=8000;     // don't instantly re-match someone we just left
-// Recovery is driven by the REAL WebRTC connection state, never by broker beats
-// (QoS0 beats drop on the public broker and would falsely kill a healthy call).
-let matchedAt=0;                 // when the current match was accepted
+// Recovery is driven ONLY by a call that connected and then died — never during
+// the connecting phase (that caused a match→teardown→rematch loop) and never by
+// broker beats (QoS0 beats drop on the public broker and would falsely kill calls).
 let everConnected=false;         // has this call ever reached pc.connectionState==='connected'?
 let pcLostSince=0;               // when a previously-connected call first went un-connected
-const NOSHOW_MS=10000;           // matched but partner never appeared in the room → re-seek
-const CONNECT_MS=25000;          // partner present but media never came up (slow TURN/NAT) → re-seek
 const RECOVERY_MS=12000;         // was connected, WebRTC down this long despite ICE restart → re-seek
 
 // App-wide presence: every client (any mode, room, or idle) beats on one shared
@@ -580,8 +578,9 @@ function acceptMatch(roomTopic,otherCid){
   matched=true;seeking=false;clearInterval(seekTimer);
   client.unsubscribe(lobbyTopic);
   partner=otherCid;
-  // Fresh call: start the establishment clock and clear any prior call state.
-  matchedAt=Date.now();everConnected=false;pcLostSince=0;
+  // Fresh call: clear any prior call state. No connecting-phase timeout — the
+  // connecting phase is left entirely alone so it can never loop on itself.
+  everConnected=false;pcLostSince=0;
   joinRoom(roomTopic);
 }
 // Have we just left this peer? Skip them briefly so "Next" doesn't snap us
@@ -592,24 +591,16 @@ function recentlyLeft(c){
   if(Date.now()-t>RELEASE_COOLDOWN){recentLeft.delete(c);return false;}
   return true;
 }
-// Random mode only. Recover from a genuinely dead partner WITHOUT ever killing a
-// healthy call: a connected call is judged solely by the real WebRTC state, never
-// by broker heartbeats (which drop on the public broker and used to false-trigger).
+// Random mode only. Recovers ONLY a call that actually connected and then died —
+// the connecting phase is never touched, so a match can't loop into teardown.
+// A dropped-`bye`/crashed partner still self-heals here: WebRTC goes to
+// disconnected/failed, and after the grace window (ICE restart's chance to recover)
+// we re-queue. A never-connected lobby-race is left for the user to hit "Next".
 function partnerWatch(){
-  if(mode!=='random'||!matched||!partner)return;
-  const now=Date.now();
+  if(mode!=='random'||!matched||!partner||!everConnected)return;
   if(pc&&pc.connectionState==='connected'){pcLostSince=0;return;}   // healthy — hands off
-  if(everConnected){
-    // We had a live call and WebRTC is no longer connected. Give ICE restart a
-    // grace window to self-heal a blip; only re-seek if it stays down.
-    if(!pcLostSince)pcLostSince=now;
-    if(now-pcLostSince>RECOVERY_MS)onPartnerLost();
-    return;
-  }
-  // First-time establishment. Distinguish a no-show (partner never even appeared
-  // in the room — e.g. a lobby race) from a slow-but-real connection.
-  if(!partnerInRoom){ if(now-matchedAt>NOSHOW_MS)onPartnerLost(); }
-  else if(now-matchedAt>CONNECT_MS)onPartnerLost();
+  if(!pcLostSince)pcLostSince=Date.now();
+  if(Date.now()-pcLostSince>RECOVERY_MS)onPartnerLost();
 }
 function onPartnerLost(){
   sysMsg('Partner disconnected — finding someone new…');
