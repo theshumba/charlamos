@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Charlamos — practise Spanish on video with a partner</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1320; --panel:#171c2e; --panel2:#1f2740; --line:#2a3354;
+    --txt:#eef1fb; --muted:#9aa3c4; --accent:#ff6b4a; --accent2:#ffd166;
+    --me:#2f6df6; --them:#2a3354;
+    --err:#ff5d6c; --spell:#ffb340; --punct:#4ea8ff; --ok:#3ddc97;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--txt);height:100vh;overflow:hidden}
+  h1,h2,h3{margin:0}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:12px;font-weight:600}
+  input,select{font-family:inherit;font-size:16px}
+
+  /* ---------- Onboarding ---------- */
+  #onboard{display:flex;align-items:center;justify-content:center;height:100vh;padding:20px;overflow-y:auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:28px;width:100%;max-width:430px}
+  .logo{font-size:30px;font-weight:800;letter-spacing:-.5px}
+  .logo span{color:var(--accent)}
+  .sub{color:var(--muted);margin:6px 0 22px;font-size:14px;line-height:1.5}
+  label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  .field{width:100%;padding:13px 14px;border-radius:12px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--txt)}
+  .cta{width:100%;margin-top:18px;padding:16px;background:var(--accent);color:#fff;font-size:16px}
+  .cta:active{transform:scale(.99)}
+  .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:18px 0 6px}
+  .or:before,.or:after{content:'';flex:1;height:1px;background:var(--line)}
+  .roomline{margin-top:6px;display:flex;gap:8px;align-items:center}
+  .ghost{background:var(--panel2);color:var(--txt);border:1px solid var(--line);padding:9px 13px;font-size:13px}
+  .join2{width:100%;margin-top:10px;padding:13px;background:var(--panel2);border:1px solid var(--line);color:var(--txt)}
+  .status{margin-top:14px;font-size:12px;color:var(--muted);text-align:center;line-height:1.5}
+
+  /* ---------- App ---------- */
+  #app{display:none;height:100vh;grid-template-columns:1fr 340px;grid-template-rows:auto 1fr auto}
+  header{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:12px 18px;
+    background:var(--panel);border-bottom:1px solid var(--line)}
+  header .logo{font-size:20px}
+  .room-tag{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-weight:700;letter-spacing:1px}
+  .peers{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+  .dot.off{background:var(--err)}
+
+  /* chat column */
+  #chatcol{grid-row:2/3;display:flex;flex-direction:column;overflow:hidden}
+
+  /* video stage */
+  #stage{position:relative;background:#000;height:42vh;min-height:200px;flex:none;overflow:hidden;
+    border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:center}
+  #remoteVideo{width:100%;height:100%;object-fit:cover;background:#05070d}
+  #remoteVideo.empty{display:none}
+  #stageMsg{position:absolute;color:var(--muted);font-size:14px;text-align:center;padding:20px}
+  #localWrap{position:absolute;right:12px;bottom:12px;width:140px;height:100px;border-radius:12px;overflow:hidden;
+    border:2px solid rgba(255,255,255,.25);background:#000;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+  #localVideo{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  #remoteName{position:absolute;left:12px;top:12px;background:rgba(0,0,0,.5);padding:5px 10px;border-radius:8px;font-size:13px;font-weight:600}
+  .vbar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;gap:10px}
+  .vbtn{width:46px;height:46px;border-radius:50%;background:rgba(30,36,60,.85);border:1px solid var(--line);color:#fff;font-size:18px;display:flex;align-items:center;justify-content:center}
+  .vbtn.off{background:rgba(255,93,108,.85)}
+  .vbtn.next{width:auto;border-radius:23px;padding:0 18px;background:var(--accent);font-size:14px}
+
+  #messages{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:12px}
+  .msg{max-width:78%;padding:10px 14px;border-radius:16px;line-height:1.45;word-wrap:break-word;position:relative}
+  .msg.me{align-self:flex-end;background:var(--me);border-bottom-right-radius:5px}
+  .msg.them{align-self:flex-start;background:var(--them);border-bottom-left-radius:5px}
+  .msg .who{font-size:11px;opacity:.7;margin-bottom:3px}
+  .msg.sys{align-self:center;background:transparent;color:var(--muted);font-size:12px;font-style:italic;text-align:center}
+  .gamecard{align-self:center;max-width:90%;background:linear-gradient(135deg,#2a2150,#3a2a1a);
+    border:1px solid var(--line);border-radius:16px;padding:14px 16px;text-align:center}
+  .gamecard .tag{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent2)}
+  .gamecard .big{font-size:20px;font-weight:800;margin:6px 0}
+  .gamecard .hint{font-size:12px;color:var(--muted);margin-top:4px;font-style:italic}
+
+  .hl{border-radius:4px;padding:0 2px;cursor:help;text-decoration:underline;text-decoration-style:wavy;text-decoration-thickness:1.5px}
+  .hl.error{text-decoration-color:var(--err);background:rgba(255,93,108,.16)}
+  .hl.spell{text-decoration-color:var(--spell);background:rgba(255,179,64,.16)}
+  .hl.punct{text-decoration-color:var(--punct);background:rgba(78,168,255,.16)}
+  .corr{margin-top:6px;font-size:12px;display:flex;flex-wrap:wrap;gap:5px}
+  .chip{background:rgba(0,0,0,.25);border-radius:8px;padding:3px 8px}
+  .chip b{color:var(--ok)}
+  .perfect{font-size:11px;color:var(--ok);margin-top:4px}
+
+  #composer{grid-row:3/3;grid-column:1/2;display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--panel)}
+  #composer input{flex:1;padding:14px;border-radius:14px;background:var(--panel2);border:1px solid var(--line);color:var(--txt)}
+  #send{background:var(--accent);color:#fff;padding:0 22px}
+  #typing{grid-column:1/2;padding:0 18px 6px;color:var(--muted);font-size:12px;height:18px}
+
+  aside{grid-row:2/4;grid-column:2/3;background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;overflow-y:auto}
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tab{flex:1;padding:13px;text-align:center;font-size:13px;color:var(--muted);background:transparent}
+  .tab.active{color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
+  .panel{display:none;padding:16px}
+  .panel.active{display:block}
+  .legend{display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--muted);margin-bottom:16px}
+  .legend i{display:inline-block;width:22px;height:3px;border-radius:3px;margin-right:8px;vertical-align:middle}
+  .stat{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .stat b{font-size:18px}
+  .gamebtn{width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    padding:14px;margin-bottom:10px;display:flex;gap:12px;align-items:center}
+  .gamebtn .ic{font-size:22px}
+  .gamebtn small{display:block;color:var(--muted);font-weight:400;margin-top:2px}
+  .summary{margin-top:10px;font-size:13px;color:var(--muted);line-height:1.6}
+  .summary .item{padding:8px 10px;background:var(--panel2);border-radius:10px;margin-bottom:6px}
+
+  @media(max-width:760px){
+    #app{grid-template-columns:1fr}
+    aside{display:none;grid-column:1/2}
+    #app.show-side aside{display:flex;position:fixed;inset:53px 0 0 0;z-index:5}
+    #composer{grid-column:1/2}
+    #typing{grid-column:1/2}
+    #stage{height:34vh}
+    #localWrap{width:100px;height:74px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ================= ONBOARDING ================= -->
+<div id="onboard">
+  <div class="card">
+    <div class="logo">Charl<span>amos</span> 🇪🇸</div>
+    <div class="sub">Video chat with a partner to practise your Spanish — like Omegle, but with an AI teacher that corrects your mistakes live and highlights them in colour.</div>
+
+    <label>Your name</label>
+    <input id="o-name" class="field" placeholder="e.g. John, Mei, Sarah" maxlength="20" />
+
+    <label>Your Spanish level</label>
+    <select id="o-level" class="field">
+      <option>A1 — Beginner</option><option>A2 — Elementary</option>
+      <option selected>B1 — Intermediate</option><option>B2 — Upper intermediate</option>
+      <option>C1 — Advanced</option>
+    </select>
+
+    <button class="cta" onclick="enter('random')">🎥 Talk to a random stranger</button>
+
+    <div class="or">or join a private room with a friend</div>
+    <div class="roomline">
+      <input id="o-room" class="field" placeholder="e.g. HOLA42" maxlength="10" style="text-transform:uppercase" />
+      <button class="ghost" onclick="randomRoom()">🎲</button>
+    </div>
+    <button class="join2" onclick="enter('room')">Join room →</button>
+
+    <div class="status">Camera + mic permission will be requested.<br>You and your friend must use <b>the same room code</b>.</div>
+  </div>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app">
+  <header>
+    <div class="logo">Charl<span>amos</span></div>
+    <div class="room-tag" id="roomTag">—</div>
+    <button class="ghost" onclick="toggleSide()" style="margin-left:6px">☰ Teacher / Games</button>
+    <div class="peers"><span class="dot off" id="connDot"></span><span id="peerCount">1</span> online</div>
+  </header>
+
+  <div id="chatcol">
+    <div id="stage">
+      <video id="remoteVideo" class="empty" autoplay playsinline></video>
+      <div id="stageMsg">Looking for a partner…</div>
+      <div id="remoteName" style="display:none"></div>
+      <div id="localWrap"><video id="localVideo" autoplay playsinline muted></video></div>
+      <div class="vbar">
+        <button class="vbtn" id="btnMic" onclick="toggleMic()" title="Mute / unmute">🎤</button>
+        <button class="vbtn" id="btnCam" onclick="toggleCam()" title="Camera on / off">🎥</button>
+        <button class="vbtn next" id="btnNext" onclick="nextStranger()" style="display:none">⏭ Next</button>
+      </div>
+    </div>
+    <div id="messages"></div>
+  </div>
+  <div id="typing"></div>
+  <div id="composer">
+    <input id="text" placeholder="Type in Spanish…" autocomplete="off"
+      oninput="onTyping()" onkeydown="if(event.key==='Enter')sendChat()" />
+    <button id="send" onclick="sendChat()">Send</button>
+  </div>
+
+  <aside>
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('teacher',this)">👩‍🏫 Teacher</button>
+      <button class="tab" onclick="showTab('games',this)">🎮 Games</button>
+      <button class="tab" onclick="showTab('summary',this)">📊 Summary</button>
+    </div>
+    <div class="panel active" id="p-teacher">
+      <h3>The AI teacher</h3>
+      <p style="color:var(--muted);font-size:13px">It checks every message and highlights mistakes in your Spanish. Hover / tap a highlight to see the fix.</p>
+      <div class="legend">
+        <div><i style="background:var(--err)"></i> Grammar (conjugation, gender)</div>
+        <div><i style="background:var(--spell)"></i> Spelling / accents</div>
+        <div><i style="background:var(--punct)"></i> Punctuation (¿ ¡ capitals)</div>
+        <div><i style="background:var(--ok)"></i> Perfect!</div>
+      </div>
+      <div class="stat"><span>Messages</span><b id="s-msgs">0</b></div>
+      <div class="stat"><span>Mistakes caught</span><b id="s-errs">0</b></div>
+      <div class="stat"><span>Accuracy</span><b id="s-acc">100%</b></div>
+    </div>
+    <div class="panel" id="p-games">
+      <h3>Icebreakers & games</h3>
+      <p style="color:var(--muted);font-size:13px">Shared with everyone in the room.</p>
+      <button class="gamebtn" onclick="game('icebreaker')"><span class="ic">💬</span><span>Icebreaker<small>A question to get the chat going</small></span></button>
+      <button class="gamebtn" onclick="game('word')"><span class="ic">📖</span><span>Word of the day<small>Learn it and use it in a sentence</small></span></button>
+      <button class="gamebtn" onclick="game('describe')"><span class="ic">🖼️</span><span>Describe the scene<small>Describe the emoji in Spanish</small></span></button>
+      <button class="gamebtn" onclick="game('roleplay')"><span class="ic">🎭</span><span>Role-play<small>A situation to act out together</small></span></button>
+      <button class="gamebtn" onclick="game('quiz')"><span class="ic">⚡</span><span>20 Questions<small>Guess what your partner is thinking</small></span></button>
+    </div>
+    <div class="panel" id="p-summary">
+      <h3>Session summary</h3>
+      <div class="summary" id="summaryBox"><div class="item">No corrections yet. Start typing!</div></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+// ================= Spanish teacher (rule-based demo) =================
+const NOUN_GENDER={casa:'f',mesa:'f',silla:'f',puerta:'f',ventana:'f',escuela:'f',ciudad:'f',gente:'f',mano:'f',foto:'f',playa:'f',comida:'f',problema:'m',día:'m',dia:'m',mapa:'m',coche:'m',libro:'m',perro:'m',gato:'m',hombre:'m',pueblo:'m',tema:'m',idioma:'m',clima:'m'};
+const QWORDS={como:'cómo',que:'qué',donde:'dónde',cuando:'cuándo',cuanto:'cuánto',quien:'quién',porque:'por qué'};
+function analyze(raw){
+  const issues=[];const text=raw.trim();if(!text)return{issues,clean:true};
+  const low=text.toLowerCase();const isQ=text.endsWith('?')||text.startsWith('¿');
+  if(text.endsWith('?')&&!text.startsWith('¿'))issues.push({match:text.split(' ')[0],type:'punct',suggestion:'¿'+text.split(' ')[0],note:'Spanish questions open with ¿'});
+  if(text.endsWith('!')&&!text.startsWith('¡'))issues.push({match:text.split(' ')[0],type:'punct',suggestion:'¡'+text.split(' ')[0],note:'Exclamations open with ¡'});
+  const first=text[0];
+  if(first&&first.toLowerCase()===first&&first.toUpperCase()!==first)issues.push({match:text.split(' ')[0],type:'punct',suggestion:capFirst(text.split(' ')[0]),note:'Start the sentence with a capital letter'});
+  const SV=[[/\byo (es|eres|son|somos)\b/,'yo soy','With "yo" use "soy"'],[/\b(tú|tu) (soy|es|son)\b/,'tú eres','With "tú" use "eres"'],[/\b(él|ella|el) (soy|eres|somos)\b/,'él es','With "él/ella" use "es"'],[/\bnosotros (es|soy|son)\b/,'nosotros somos','With "nosotros" use "somos"'],[/\bellos (es|soy|somos)\b/,'ellos son','With "ellos" use "son"'],[/\byo (tiene|tienes|tienen)\b/,'yo tengo','With "yo" use "tengo"'],[/\b(tú|tu) (tengo|tiene|tienen)\b/,'tú tienes','With "tú" use "tienes"'],[/\byo (está|estás|están)\b/,'yo estoy','With "yo" use "estoy"'],[/\b(tú|tu) (estoy|está|están)\b/,'tú estás','With "tú" use "estás"'],[/\byo (va|vas|van)\b/,'yo voy','With "yo" use "voy"']];
+  for(const[re,sug,note]of SV){const m=low.match(re);if(m)issues.push({match:m[0],type:'error',suggestion:sug,note});}
+  const gm=low.match(/\b(el|la|un|una)\s+([a-záéíóúñ]+)/g)||[];
+  for(const phrase of gm){const[art,noun]=phrase.split(/\s+/);const g=NOUN_GENDER[noun];if(!g)continue;const artMasc=art==='el'||art==='un';if(g==='m'&&!artMasc)issues.push({match:phrase,type:'error',suggestion:(art==='una'?'un':'el')+' '+noun,note:`"${noun}" is masculine`});if(g==='f'&&artMasc)issues.push({match:phrase,type:'error',suggestion:(art==='un'?'una':'la')+' '+noun,note:`"${noun}" is feminine`});}
+  if(isQ){const fw=low.replace(/^¿/,'').split(/\s+/)[0].replace(/[?.!]/g,'');if(QWORDS[fw])issues.push({match:fw,type:'spell',suggestion:QWORDS[fw],note:'Takes an accent in questions'});}
+  if(/\besta bien\b/.test(low))issues.push({match:'esta bien',type:'spell',suggestion:'está bien',note:'"está" needs an accent'});
+  if(/\bmuy mucho\b/.test(low))issues.push({match:'muy mucho',type:'error',suggestion:'mucho',note:'Don\'t combine "muy" + "mucho"'});
+  const seen=new Set();const uniq=[];for(const i of issues){const k=i.match+'|'+i.suggestion;if(!seen.has(k)){seen.add(k);uniq.push(i);}}
+  return{issues:uniq,clean:uniq.length===0};
+}
+function capFirst(w){return w.charAt(0).toUpperCase()+w.slice(1);}
+function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function renderWithHighlights(text,issues){let html=esc(text);const sorted=[...issues].sort((a,b)=>b.match.length-a.match.length);for(const is of sorted){const safe=esc(is.match).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');const re=new RegExp(safe,'i');html=html.replace(re,m=>`<span class="hl ${is.type}" title="${esc(is.note)} → ${esc(is.suggestion)}">${m}</span>`);}return html;}
+
+// ================= State + MQTT realtime =================
+let client,me={},mode='room',room='',topic='',lobbyTopic='charlamos/v1/lobby',cid='';
+let stats={msgs:0,errs:0},allCorrections=[];
+const peers=new Map();           // cid -> {name,last}
+let partner=null;                // the other peer's cid (1-to-1 video)
+let matched=false, seeking=false;
+
+// media / webrtc
+let localStream=null, pc=null, micOn=true, camOn=true;
+let partnerInRoom=false, pendingIce=[], reqOfferTimer=null, helloTimer=null, callConnected=false;
+// ICE servers. STUN handles most same-network / mild-NAT cases. TURN is required
+// for cross-network / strict-NAT video to relay when a direct path can't be found.
+//
+// IMPORTANT FOR RELIABLE CROSS-NETWORK VIDEO: the old static OpenRelay credentials
+// (openrelay.metered.ca / openrelayproject) are DEPRECATED and now fail TURN auth
+// (server returns allocate error 400). Get a free Metered API key (20GB/mo) at
+// https://dashboard.metered.ca → create an app → copy the API key, then set
+// METERED_TURN_URL below to fetch fresh, authenticating, time-limited credentials.
+// Until that key is wired in, the staticauth.openrelay.metered.ca legacy host
+// (ports 80/443) is the best no-signup fallback.
+// Points at our own serverless function (/api/turn), which fetches fresh Metered
+// TURN credentials server-side using a SECRET KEY stored as a Vercel env var —
+// so the secret never appears in the front-end / page source.
+const METERED_TURN_URL='/api/turn';
+let ICE_SERVERS=[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun.cloudflare.com:3478'},
+  // Legacy static-auth TURN host (no-signup stopgap). Replace with a Metered API key
+  // (see METERED_TURN_URL above) for reliable cross-network video.
+  {urls:'turn:staticauth.openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
+  {urls:'turn:staticauth.openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
+  {urls:'turn:staticauth.openrelay.metered.ca:443?transport=tcp',username:'openrelayproject',credential:'openrelayproject'},
+  {urls:'turns:staticauth.openrelay.metered.ca:443?transport=tcp',username:'openrelayproject',credential:'openrelayproject'}
+];
+// If a Metered API key URL is configured, fetch fresh credentials before first call.
+async function refreshIceServers(){
+  if(!METERED_TURN_URL)return;
+  try{
+    const res=await fetch(METERED_TURN_URL);
+    const fetched=await res.json();
+    if(Array.isArray(fetched)&&fetched.length){
+      ICE_SERVERS=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'},...fetched];
+    }
+  }catch(e){/* keep static fallback */}
+}
+
+function uid(){return Math.random().toString(36).slice(2,10);}
+function randomRoom(){const a='ABCDEFGHJKMNPQRSTUVWXYZ';let s='';for(let i=0;i<3;i++)s+=a[Math.floor(Math.random()*a.length)];s+=Math.floor(10+Math.random()*89);document.getElementById('o-room').value=s;}
+randomRoom();
+
+async function enter(kind){
+  mode=kind;
+  me={name:document.getElementById('o-name').value.trim()||'Anon',level:document.getElementById('o-level').value};
+  cid=uid();
+  document.getElementById('onboard').style.display='none';
+  document.getElementById('app').style.display='grid';
+  await ensureMedia();             // ask for cam+mic up front
+  await refreshIceServers();       // fetch fresh TURN creds if a Metered key is set
+  connectBroker(()=>{
+    if(mode==='random'){
+      document.getElementById('roomTag').textContent='RANDOM';
+      document.getElementById('btnNext').style.display='flex';
+      startSeeking();
+    }else{
+      room=(document.getElementById('o-room').value.trim()||'LOBBY').toUpperCase();
+      document.getElementById('roomTag').textContent=room;
+      joinRoom('charlamos/v1/'+room);
+    }
+  });
+}
+
+async function ensureMedia(){
+  if(localStream)return true;
+  try{
+    localStream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:true});
+    document.getElementById('localVideo').srcObject=localStream;
+    return true;
+  }catch(e){
+    sysMsg('Camera/mic not available — continuing with text + the AI teacher only.');
+    document.getElementById('localWrap').style.display='none';
+    return false;
+  }
+}
+
+function connectBroker(onReady){
+  client=mqtt.connect('wss://broker.emqx.io:8084/mqtt',{clientId:'charlamos_'+cid,clean:true,reconnectPeriod:2000});
+  client.on('connect',()=>{document.getElementById('connDot').classList.remove('off');onReady&&onReady();onReady=null;});
+  client.on('reconnect',()=>document.getElementById('connDot').classList.add('off'));
+  client.on('close',()=>document.getElementById('connDot').classList.add('off'));
+  client.on('message',(t,payload)=>{
+    let m;try{m=JSON.parse(payload.toString());}catch{return;}
+    if(m.cid===cid)return;
+    if(t===lobbyTopic)handleLobby(m); else handleRoom(m);
+  });
+  setInterval(()=>{if(topic)pub({type:'beat'});},5000);
+  setInterval(prune,4000);
+  window.addEventListener('beforeunload',()=>{if(topic)pub({type:'bye'});});
+}
+
+function pub(obj){if(client&&client.connected&&topic){
+  // Signalling packets (voice SDP/ICE, presence) ride QoS1 so a single dropped
+  // packet on the public broker doesn't silently kill the call.
+  const qos=(obj.type==='voice'||obj.type==='req-offer'||obj.type==='hello'||obj.type==='hi'||obj.type==='ready')?1:0;
+  client.publish(topic,JSON.stringify({...obj,cid,name:me.name}),{qos});
+}}
+function pubLobby(obj){if(client&&client.connected)client.publish(lobbyTopic,JSON.stringify({...obj,cid,name:me.name}));}
+
+// ---- Random matchmaking lobby ----
+function startSeeking(){
+  matched=false;seeking=true;partner=null;
+  setStage(null,'Looking for a partner…');
+  client.subscribe(lobbyTopic);
+  pubLobby({type:'seek'});
+  seekTimer=setInterval(()=>{if(seeking)pubLobby({type:'seek'});},2000);
+}
+let seekTimer;
+function handleLobby(m){
+  if(!seeking||matched)return;
+  if(m.type==='seek'){
+    // deterministic: lower cid initiates the match
+    if(cid<m.cid){
+      const r=[cid,m.cid].sort().join('-');
+      pubLobby({type:'match',a:cid,b:m.cid,room:r});
+      acceptMatch('charlamos/v1/R-'+r,m.cid);
+    }
+  }else if(m.type==='match'&&m.b===cid){
+    acceptMatch('charlamos/v1/R-'+m.room,m.a);
+  }
+}
+function acceptMatch(roomTopic,otherCid){
+  if(matched)return;
+  matched=true;seeking=false;clearInterval(seekTimer);
+  client.unsubscribe(lobbyTopic);
+  partner=otherCid;
+  joinRoom(roomTopic);
+}
+
+// ---- Join any room (friend room or matched random room) ----
+function joinRoom(t){
+  if(topic)client.unsubscribe(topic);
+  topic=t;
+  partnerInRoom=false; callConnected=false; pendingIce=[];
+  client.subscribe(topic,()=>{
+    sysMsg(mode==='random'?'Connected! Say hello in Spanish 👋':`You're in this room. Say hello in Spanish! 👋`);
+    // Re-announce a few times so a partner who subscribed late still hears us.
+    let n=0; clearInterval(helloTimer);
+    const announce=()=>{ pub({type:'hello'}); if(++n>=5||callConnected) clearInterval(helloTimer); };
+    announce(); helloTimer=setInterval(announce,1200);
+  });
+}
+
+function handleRoom(m){
+  if(m.type==='hello'){touch(m);pub({type:'hi'});onPartnerHere(m.cid);sysMsg(`${m.name} joined`);return;}
+  if(m.type==='hi'){touch(m);onPartnerHere(m.cid);return;}
+  if(m.type==='ready'){touch(m);onPartnerHere(m.cid);return;}
+  if(m.type==='req-offer'){
+    touch(m);onPartnerHere(m.cid);
+    // Offerer (lower cid): create the offer, OR re-send the existing offer if the
+    // answer was dropped (QoS0/packet loss) so a lost ANSWER self-heals.
+    if(partner&&cid<partner){
+      if(!pc)makeOffer();
+      else if(pc.localDescription&&pc.signalingState==='have-local-offer')pub({type:'voice',sdp:pc.localDescription});
+    }
+    return;
+  }
+  // Heartbeats also pull a peer into negotiation: if a peer missed every hello/hi
+  // (broker jitter, late join past the hello cap), beats every 5s re-trigger it.
+  if(m.type==='beat'){touch(m);onPartnerHere(m.cid);return;}
+  if(m.type==='bye'){onPartnerLeft(m);return;}
+  if(m.type==='chat'){touch(m);addMessage(m.name,m.text,false);return;}
+  if(m.type==='typing'){touch(m);showTyping(m.name);return;}
+  if(m.type==='game'){addGameCard(m.tag,m.title,m.body,m.hint);return;}
+  if(m.type==='voice'){onVoiceSignal(m);return;}
+}
+
+// Both peers have confirmed presence on the room topic — now it's safe to negotiate.
+function onPartnerHere(otherCid){
+  if(!otherCid||otherCid===cid)return;
+  // Register this peer as live so partner selection can see it.
+  if(!peers.has(otherCid))peers.set(otherCid,{name:'',last:Date.now()});
+  if(mode==='random'){
+    // partner is fixed by acceptMatch; ignore presence from anyone else.
+    if(otherCid!==partner)return;
+  }else{
+    // FRIEND ROOM: pick the offerer deterministically from the lowest live cid
+    // (other than self) rather than binding to whoever's presence lands first.
+    // This survives a stale/3rd peer announcing before the real partner.
+    recomputePartner();
+    if(!partner||otherCid!==partner)return;
+  }
+  partnerInRoom=true;
+  negotiate();
+}
+// Friend-room: partner = lowest-cid live peer other than self.
+function recomputePartner(){
+  if(mode==='random')return;
+  let best=null;const now=Date.now();
+  for(const[k,v]of peers){ if(k===cid)continue; if(now-v.last>13000)continue; if(best===null||k<best)best=k; }
+  if(best&&best!==partner){
+    // Partner changed — reset any in-flight negotiation tied to the old partner.
+    if(pc){try{pc.close();}catch{}pc=null;}
+    pendingIce=[];clearInterval(reqOfferTimer);reqOfferTimer=null;
+    partner=best;
+  }else if(best){
+    partner=best;
+  }
+}
+function negotiate(){
+  if(!partner||!partnerInRoom||callConnected)return;
+  if(cid<partner){
+    // I'm the offerer — drive the offer directly once both peers are present
+    // (no longer dependent solely on receiving a req-offer). makeOffer is guarded.
+    if(!pc)makeOffer();
+  }else{
+    // I'm the answerer — keep asking for an offer until the call connects.
+    if(reqOfferTimer)return;
+    const ask=()=>{ if(callConnected){clearInterval(reqOfferTimer);reqOfferTimer=null;return;} pub({type:'req-offer'}); };
+    ask(); reqOfferTimer=setInterval(ask,1500);
+  }
+}
+function touch(m){peers.set(m.cid,{name:m.name,last:Date.now()});updateCount();}
+function prune(){const now=Date.now();let ch=false;for(const[k,v]of peers){if(now-v.last>13000){peers.delete(k);ch=true;}}if(ch)updateCount();}
+function updateCount(){document.getElementById('peerCount').textContent=peers.size+1;}
+
+function onPartnerLeft(m){
+  if(m&&m.name)sysMsg(`${m.name} left`);
+  peers.delete(m.cid);updateCount();
+  teardownCall();
+  setStage(null, mode==='random'?'Partner left. Finding someone new…':'Partner left.');
+  if(mode==='random'){partner=null;startSeeking();}
+}
+
+// ================= WebRTC video/voice =================
+// Perfect-negotiation state. The impolite peer (lower cid = offerer) ignores
+// incoming offers during glare; the polite peer rolls back and accepts.
+let makingOffer=false, ignoreOffer=false;
+// Serialize all signalling tasks so offer/answer/ICE never interleave (avoids
+// addIceCandidate-before-remoteDescription and rollback races).
+let signalChain=Promise.resolve();
+function enqueueSignal(task){ signalChain=signalChain.then(task).catch(()=>{}); return signalChain; }
+function isPolite(){ return partner && cid>partner; }
+
+function setupPC(){
+  pc=new RTCPeerConnection({iceServers:ICE_SERVERS});
+  // Add local media if we have it; otherwise still build the connection with
+  // recvonly transceivers so a camera-less / permission-denied peer can RECEIVE.
+  if(localStream){
+    localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+  }else{
+    try{pc.addTransceiver('audio',{direction:'recvonly'});pc.addTransceiver('video',{direction:'recvonly'});}catch{}
+  }
+  pc.onicecandidate=e=>{if(e.candidate)pub({type:'voice',ice:e.candidate});};
+  pc.ontrack=e=>{
+    const rv=document.getElementById('remoteVideo');
+    rv.srcObject=e.streams[0];
+    rv.classList.remove('empty');   // un-hide BEFORE play() (display:none throttles playback)
+    document.getElementById('stageMsg').style.display='none';
+    const pn=peers.get(partner);setRemoteName(pn&&pn.name?pn.name:'Partner');
+    attemptPlay(rv);
+    if(e.track)e.track.onunmute=()=>attemptPlay(rv);
+    rv.onloadedmetadata=()=>attemptPlay(rv);
+  };
+  pc.onconnectionstatechange=()=>{
+    const s=pc.connectionState;
+    if(s==='connected'){
+      callConnected=true;
+      clearInterval(reqOfferTimer);reqOfferTimer=null;
+      clearInterval(helloTimer);helloTimer=null;
+    }else if(s==='failed'){
+      sysMsg('Video connection failed — retrying…');
+      // Only the offerer can usefully restart ICE (creates a fresh offer).
+      if(cid<partner){ enqueueSignal(async()=>{ try{await pc.restartIce&&pc.restartIce();}catch{}; makeOffer({iceRestart:true}); }); }
+      else { pub({type:'req-offer'}); }
+    }
+  };
+  pc.oniceconnectionstatechange=()=>{
+    if(pc&&pc.iceConnectionState==='disconnected'&&cid<partner){ try{pc.restartIce&&pc.restartIce();}catch{} }
+  };
+  // Renegotiation hook (e.g. ICE restart). Only the offerer creates offers.
+  pc.onnegotiationneeded=()=>{ if(cid<partner)makeOffer(); };
+}
+
+// Autoplay-policy-safe play: try with audio, fall back to muted on rejection,
+// and surface a one-time tap-to-unmute so audio can be restored after a gesture.
+function attemptPlay(rv){
+  rv.muted=false;
+  const p=rv.play();
+  if(p&&p.catch)p.catch(()=>{ rv.muted=true; rv.play().then(showUnmute).catch(()=>{}); });
+}
+let unmuteShown=false;
+function showUnmute(){
+  if(unmuteShown)return; unmuteShown=true;
+  const stage=document.getElementById('stage');
+  const b=document.createElement('button');
+  b.textContent='🔇 Tap to unmute';
+  b.style.cssText='position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:6;background:rgba(255,107,74,.92);color:#fff;border-radius:20px;padding:8px 16px;font-size:13px';
+  b.onclick=()=>{const rv=document.getElementById('remoteVideo');rv.muted=false;rv.play().catch(()=>{});b.remove();};
+  stage.appendChild(b);
+}
+
+async function flushIce(){
+  if(!pc||!pc.remoteDescription)return;
+  const queue=pendingIce; pendingIce=[];
+  for(const c of queue){ try{await pc.addIceCandidate(c);}catch{} }
+}
+
+// Create (or re-create for recovery) an offer. Separated from PC creation so
+// recovery / renegotiation offers are possible (the old `if(pc)return` blocked them).
+function makeOffer(opts){
+  enqueueSignal(async()=>{
+    if(callConnected&&!(opts&&opts.iceRestart))return;
+    if(!pc)setupPC();
+    // Only offer when stable (fresh) or doing an explicit ICE restart.
+    if(pc.signalingState!=='stable'&&!(opts&&opts.iceRestart)){
+      // Already mid-negotiation: resend current local offer if we have one.
+      if(pc.localDescription&&pc.signalingState==='have-local-offer')pub({type:'voice',sdp:pc.localDescription});
+      return;
+    }
+    try{
+      makingOffer=true;
+      const offer=await pc.createOffer(opts&&opts.iceRestart?{iceRestart:true}:undefined);
+      if(pc.signalingState!=='stable')return; // raced; bail
+      await pc.setLocalDescription(offer);
+      pub({type:'voice',sdp:pc.localDescription});
+    }catch(e){/* ignore */}
+    finally{ makingOffer=false; }
+  });
+}
+
+async function onVoiceSignal(m){
+  enqueueSignal(async()=>{
+    try{
+      if(m.sdp){
+        if(!pc)setupPC();
+        const desc=m.sdp;
+        const offerCollision = desc.type==='offer' && (makingOffer || pc.signalingState!=='stable');
+        ignoreOffer = !isPolite() && offerCollision;
+        if(ignoreOffer)return; // impolite peer drops the colliding offer (glare)
+        if(desc.type==='offer'&&offerCollision){
+          // polite peer: roll back our local offer, then accept theirs
+          try{await pc.setLocalDescription({type:'rollback'});}catch{}
+        }
+        await pc.setRemoteDescription(desc);
+        await flushIce();
+        if(desc.type==='offer'){
+          const ans=await pc.createAnswer();
+          await pc.setLocalDescription(ans);
+          pub({type:'voice',sdp:pc.localDescription});
+        }
+      }else if(m.ice){
+        if(pc&&pc.remoteDescription){ try{await pc.addIceCandidate(m.ice);}catch{} }
+        else pendingIce.push(m.ice);
+      }
+    }catch(e){ /* ignore transient signalling errors */ }
+    // Always try to drain buffered candidates after any task completes.
+    await flushIce();
+  });
+}
+function teardownCall(){
+  clearInterval(reqOfferTimer);reqOfferTimer=null;
+  clearInterval(helloTimer);helloTimer=null;
+  callConnected=false;partnerInRoom=false;pendingIce=[];
+  makingOffer=false;ignoreOffer=false;signalChain=Promise.resolve();
+  if(pc){try{pc.close();}catch{}pc=null;}
+  const rv=document.getElementById('remoteVideo');rv.srcObject=null;rv.classList.add('empty');setRemoteName('');
+}
+function setStage(stream,msg){const el=document.getElementById('stageMsg');el.textContent=msg||'';el.style.display=msg?'block':'none';}
+function setRemoteName(n){const el=document.getElementById('remoteName');if(n){el.textContent=n;el.style.display='block';}else el.style.display='none';}
+
+function toggleMic(){micOn=!micOn;if(localStream)localStream.getAudioTracks().forEach(t=>t.enabled=micOn);document.getElementById('btnMic').classList.toggle('off',!micOn);document.getElementById('btnMic').textContent=micOn?'🎤':'🔇';}
+function toggleCam(){camOn=!camOn;if(localStream)localStream.getVideoTracks().forEach(t=>t.enabled=camOn);document.getElementById('btnCam').classList.toggle('off',!camOn);document.getElementById('btnCam').textContent=camOn?'🎥':'📷';}
+
+function nextStranger(){
+  if(mode!=='random')return;
+  pub({type:'bye'});          // tell current partner
+  teardownCall();
+  peers.clear();updateCount();
+  partner=null;
+  if(topic){client.unsubscribe(topic);topic='';}
+  setStage(null,'Finding someone new…');
+  clearMessages();
+  startSeeking();
+}
+
+// ================= Messaging =================
+function sendChat(){const inp=document.getElementById('text');const t=inp.value.trim();if(!t)return;addMessage(me.name,t,true);pub({type:'chat',text:t});inp.value='';}
+let typingTimer,lastTyping=0;
+function onTyping(){const now=Date.now();if(now-lastTyping>1200){lastTyping=now;pub({type:'typing'});}}
+function showTyping(who){const el=document.getElementById('typing');el.textContent=`${who} is typing…`;clearTimeout(typingTimer);typingTimer=setTimeout(()=>el.textContent='',1500);}
+function clearMessages(){document.getElementById('messages').innerHTML='';}
+function addMessage(who,text,mine){
+  const{issues}=analyze(text);const box=document.getElementById('messages');const div=document.createElement('div');
+  div.className='msg '+(mine?'me':'them');
+  let html=`<div class="who">${esc(who)}</div>${renderWithHighlights(text,issues)}`;
+  if(issues.length)html+=`<div class="corr">`+issues.map(i=>`<span class="chip">${esc(i.match)} → <b>${esc(i.suggestion)}</b></span>`).join('')+`</div>`;
+  else html+=`<div class="perfect">✓ Perfect!</div>`;
+  div.innerHTML=html;box.appendChild(div);box.scrollTop=box.scrollHeight;
+  stats.msgs++;stats.errs+=issues.length;
+  document.getElementById('s-msgs').textContent=stats.msgs;document.getElementById('s-errs').textContent=stats.errs;
+  document.getElementById('s-acc').textContent=(stats.msgs?Math.max(0,Math.round(100-(stats.errs/stats.msgs)*25)):100)+'%';
+  issues.forEach(i=>allCorrections.push({who,...i}));renderSummary();
+}
+function sysMsg(t){const box=document.getElementById('messages');const d=document.createElement('div');d.className='msg sys';d.textContent=t;box.appendChild(d);box.scrollTop=box.scrollHeight;}
+function renderSummary(){const box=document.getElementById('summaryBox');if(!allCorrections.length){box.innerHTML='<div class="item">No corrections yet. Keep chatting!</div>';return;}box.innerHTML=allCorrections.slice(-25).reverse().map(c=>`<div class="item"><b>${esc(c.who)}:</b> ${esc(c.match)} → <span style="color:var(--ok)">${esc(c.suggestion)}</span><br><span style="opacity:.7">${esc(c.note)}</span></div>`).join('');}
+
+// ================= Games =================
+const ICE=[['¿Qué desayunaste hoy?','What did you have for breakfast?'],['¿Cuál es tu película favorita y por qué?','Favourite film and why?'],['Si pudieras viajar a cualquier país, ¿adónde irías?','If you could travel anywhere, where?'],['¿Qué te gusta hacer los fines de semana?','What do you like doing at weekends?'],['Describe a tu mejor amigo.','Describe your best friend.'],['¿Prefieres el mar o la montaña?','Sea or mountains?'],['¿Qué comida no soportas?','What food can\'t you stand?']];
+const WORDS=[['madrugar','to get up very early'],['sobremesa','chatting at the table after a meal'],['estrenar','to use/wear something for the first time'],['friolero','someone who feels the cold a lot'],['empalagar','to be sickly sweet'],['chapuza','a botched job'],['apapachar','to cuddle warmly']];
+const SCENES=['🏖️☀️🍹','🌧️🏙️☂️','🐶🌳🎾','👨‍🍳🍝🔥','🎸🎤🎉','🚗🛣️🏔️','📚☕🌙'];
+const ROLES=[['En un restaurante: uno es camarero, otro pide la comida.','At a restaurant: one is the waiter, one orders.'],['En el aeropuerto: uno perdió la maleta, otro es el agente.','At the airport: lost luggage vs. agent.'],['De compras: regateen el precio en un mercado.','Shopping: haggle over a price at a market.'],['El médico: describe tus síntomas, el otro aconseja.','Doctor: describe symptoms, the other advises.']];
+function game(kind){let tag,title,body,hint='';if(kind==='icebreaker'){const q=pick(ICE);tag='Icebreaker';title='💬';body=q[0];hint=q[1];}else if(kind==='word'){const w=pick(WORDS);tag='Word of the day';title='📖 '+w[0];body=w[1];hint='Use it in a Spanish sentence!';}else if(kind==='describe'){tag='Describe the scene';title=pick(SCENES);body='Describe this scene in Spanish.';}else if(kind==='roleplay'){const r=pick(ROLES);tag='Role-play';title='🎭';body=r[0];hint=r[1];}else{tag='20 Questions';title='⚡';body='Uno piensa en algo; el otro adivina con preguntas de sí/no.';hint='One thinks of something, the other guesses with yes/no questions.';}addGameCard(tag,title,body,hint);pub({type:'game',tag,title,body,hint});}
+function pick(a){return a[Math.floor(Math.random()*a.length)];}
+function addGameCard(tag,title,body,hint){const box=document.getElementById('messages');const d=document.createElement('div');d.className='gamecard';d.innerHTML=`<div class="tag">${esc(tag)}</div><div class="big">${esc(title)}</div><div>${esc(body)}</div>`+(hint?`<div class="hint">${esc(hint)}</div>`:'');box.appendChild(d);box.scrollTop=box.scrollHeight;}
+
+// ================= UI =================
+function showTab(name,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.getElementById('p-'+name).classList.add('active');}
+function toggleSide(){document.getElementById('app').classList.toggle('show-side');}
+</script>
+</body>
+</html>
